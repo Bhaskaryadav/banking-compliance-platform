@@ -198,32 +198,40 @@ jobs:
           
           Respond with ONLY valid JSON, no other text."
           
-          # Run Claude Code in headless mode with stream-json output
+          # Run Claude Code in headless mode with text output (model responds with JSON)
           claude \
             --model claude-haiku-4-5 \
-            --output-format stream-json \
+            --output-format text \
             -p "$PCI_PROMPT" \
             2>/dev/null \
             | python3 -c "
           import sys, json
 
-          # Parse stream-json events to extract the final text content
-          result_text = ''
-          for line in sys.stdin:
-              line = line.strip()
-              if not line:
-                  continue
-              try:
-                  event = json.loads(line)
-                  # Extract content from stream events
-                  if event.get('type') == 'content_block_delta':
-                      delta = event.get('delta', {})
-                      if delta.get('type') == 'text_delta':
-                          result_text += delta.get('text', '')
-              except json.JSONDecodeError:
-                  continue
+          raw = sys.stdin.read().strip()
 
-          print(result_text)
+          # Try direct parse first
+          try:
+              json.loads(raw)
+              print(raw)
+              sys.exit(0)
+          except Exception:
+              pass
+
+          # Brace-matching extractor for JSON embedded in markdown or prose
+          start = raw.find('{')
+          if start >= 0:
+              depth = 0
+              for i, ch in enumerate(raw[start:], start):
+                  if ch == '{':
+                      depth += 1
+                  elif ch == '}':
+                      depth -= 1
+                      if depth == 0:
+                          print(raw[start:i+1])
+                          sys.exit(0)
+
+          # Fallback: write error sentinel
+          print('{\"overall_pci_status\": \"ERROR\", \"critical_high_count\": 0}')
           " > ci_reports/claude_pci_analysis.json 2>/dev/null || echo '{"overall_pci_status": "ERROR", "critical_high_count": 0, "summary": "Claude Code analysis failed"}' > ci_reports/claude_pci_analysis.json
           
           # Extract key metrics
@@ -412,28 +420,39 @@ jobs:
           # Run Claude-as-Judge in headless mode
           claude \
             --model claude-sonnet-4-5 \
-            --output-format stream-json \
+            --output-format text \
             -p "$JUDGE_PROMPT" \
             2>/dev/null \
             | python3 -c "
           import sys, json
 
-          result_text = ''
-          for line in sys.stdin:
-              line = line.strip()
-              if not line:
-                  continue
-              try:
-                  event = json.loads(line)
-                  if event.get('type') == 'content_block_delta':
-                      delta = event.get('delta', {})
-                      if delta.get('type') == 'text_delta':
-                          result_text += delta.get('text', '')
-              except json.JSONDecodeError:
-                  continue
-          print(result_text)
+          raw = sys.stdin.read().strip()
+
+          # Try direct parse first
+          try:
+              json.loads(raw)
+              print(raw)
+              sys.exit(0)
+          except Exception:
+              pass
+
+          # Brace-matching extractor for JSON embedded in markdown or prose
+          start = raw.find('{')
+          if start >= 0:
+              depth = 0
+              for i, ch in enumerate(raw[start:], start):
+                  if ch == '{':
+                      depth += 1
+                  elif ch == '}':
+                      depth -= 1
+                      if depth == 0:
+                          print(raw[start:i+1])
+                          sys.exit(0)
+
+          # Fallback: write error sentinel
+          print('{\"score\": 0, \"grade\": \"ERROR\", \"gate_decision\": \"FAIL\", \"reviewer_summary\": \"Parsing failed\"}')
           " > ci_reports/compliance_score.json 2>/dev/null \
-            || echo '{\"score\": 0, \"grade\": \"ERROR\", \"gate_decision\": \"FAIL\", \"reviewer_summary\": \"Scoring failed — manual review required\"}' > ci_reports/compliance_score.json
+            || echo '{"score": 0, "grade": "ERROR", "gate_decision": "FAIL", "reviewer_summary": "Scoring failed — manual review required"}' > ci_reports/compliance_score.json
           
           # Extract score and decision
           SCORE=$(python3 -c "
