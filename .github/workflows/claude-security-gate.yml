@@ -198,31 +198,40 @@ jobs:
           
           Respond with ONLY valid JSON, no other text."
           
-          # Run Claude Code in headless mode with json output
+          # Run Claude Code in headless mode with text output (model responds with JSON)
           claude \
             --model claude-haiku-4-5 \
-            --output-format json \
+            --output-format text \
             -p "$PCI_PROMPT" \
             2>/dev/null \
             | python3 -c "
-          import sys, json, re
+          import sys, json
 
           raw = sys.stdin.read().strip()
-          result_text = ''
+
+          # Try direct parse first
           try:
-              outer = json.loads(raw)
-              # Claude Code json format: {result: '...'} or {content: [...]}
-              result_text = outer.get('result', '') or outer.get('text', '')
-              if not result_text:
-                  for block in outer.get('content', []):
-                      if isinstance(block, dict) and block.get('type') == 'text':
-                          result_text += block.get('text', '')
+              json.loads(raw)
+              print(raw)
+              sys.exit(0)
           except Exception:
-              result_text = raw
-          # Strip markdown code fences if present
-          result_text = re.sub(r'^[\s\S]*?({)', r'\1', result_text, count=1)
-          result_text = re.sub(r'}[^}]*$', '}', result_text[::-1], count=1)[::-1]
-          print(result_text)
+              pass
+
+          # Brace-matching extractor for JSON embedded in markdown or prose
+          start = raw.find('{')
+          if start >= 0:
+              depth = 0
+              for i, ch in enumerate(raw[start:], start):
+                  if ch == '{':
+                      depth += 1
+                  elif ch == '}':
+                      depth -= 1
+                      if depth == 0:
+                          print(raw[start:i+1])
+                          sys.exit(0)
+
+          # Fallback: write error sentinel
+          print('{\"overall_pci_status\": \"ERROR\", \"critical_high_count\": 0}')
           " > ci_reports/claude_pci_analysis.json 2>/dev/null || echo '{"overall_pci_status": "ERROR", "critical_high_count": 0, "summary": "Claude Code analysis failed"}' > ci_reports/claude_pci_analysis.json
           
           # Extract key metrics
@@ -411,27 +420,37 @@ jobs:
           # Run Claude-as-Judge in headless mode
           claude \
             --model claude-sonnet-4-5 \
-            --output-format json \
+            --output-format text \
             -p "$JUDGE_PROMPT" \
             2>/dev/null \
             | python3 -c "
-          import sys, json, re
+          import sys, json
 
           raw = sys.stdin.read().strip()
-          result_text = ''
+
+          # Try direct parse first
           try:
-              outer = json.loads(raw)
-              result_text = outer.get('result', '') or outer.get('text', '')
-              if not result_text:
-                  for block in outer.get('content', []):
-                      if isinstance(block, dict) and block.get('type') == 'text':
-                          result_text += block.get('text', '')
+              json.loads(raw)
+              print(raw)
+              sys.exit(0)
           except Exception:
-              result_text = raw
-          # Strip markdown code fences if present
-          result_text = re.sub(r'^[\s\S]*?({)', r'\1', result_text, count=1)
-          result_text = re.sub(r'}[^}]*$', '}', result_text[::-1], count=1)[::-1]
-          print(result_text)
+              pass
+
+          # Brace-matching extractor for JSON embedded in markdown or prose
+          start = raw.find('{')
+          if start >= 0:
+              depth = 0
+              for i, ch in enumerate(raw[start:], start):
+                  if ch == '{':
+                      depth += 1
+                  elif ch == '}':
+                      depth -= 1
+                      if depth == 0:
+                          print(raw[start:i+1])
+                          sys.exit(0)
+
+          # Fallback: write error sentinel
+          print('{\"score\": 0, \"grade\": \"ERROR\", \"gate_decision\": \"FAIL\", \"reviewer_summary\": \"Parsing failed\"}')
           " > ci_reports/compliance_score.json 2>/dev/null \
             || echo '{"score": 0, "grade": "ERROR", "gate_decision": "FAIL", "reviewer_summary": "Scoring failed — manual review required"}' > ci_reports/compliance_score.json
           
